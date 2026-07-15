@@ -1,1 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Coach Timer">
+  <meta name="theme-color" content="#0a0a0f">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <title>Coach Timer</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --card: #13131a;
+      --card-active: #16161f;
+      --border: #22222e;
+      --accent: #4af0a0;
+      --accent-dim: rgba(74, 240, 160, 0.12);
+      --accent-lap: #f0a04a;
+      --accent-lap-dim: rgba(240, 160, 74, 0.12);
+      --text: #f0f0f8;
+      --text-dim: #6b6b88;
+      --text-label: #9898b8;
+      --font-mono: 'SF Mono', 'Fira Mono', 'Consolas', monospace;
+      --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --radius: 16px;
+      --radius-sm: 10px;
+    }
 
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      overscroll-behavior: none;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100dvh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg);
+    }
+
+    .app-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-global {
+      padding: 7px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-global:active { opacity: 0.7; transform: scale(0.97); }
+    .btn-global.start-all { border-color: var(--accent); color: var(--accent); }
+    .btn-global.start-all.running { background: var(--accent-dim); }
+    .btn-global.reset-all { border-color: var(--border); color: var(--text-dim); }
+
+    .grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      padding: 10px;
+      align-content: start;
+    }
+
+    /* 3 columns on wider screens */
+    @media (min-width: 600px) {
+      .grid { grid-template-columns: 1fr 1fr 1fr; }
+    }
+
+    .watch-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      position: relative;
+      transition: border-color 0.2s;
+      user-select: none;
+    }
+
+    .watch-card.running {
+      border-color: rgba(74, 240, 160, 0.25);
+    }
+
+    .watch-card.lapped {
+      border-color: rgba(240, 160, 74, 0.3);
+    }
+
+    /* Name field */
+    .watch-name {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-label);
+      background: transparent;
+      border: none;
+      outline: none;
+      width: 100%;
+      font-family: var(--font-ui);
+      cursor: text;
+    }
+
+    .watch-name::placeholder { color: var(--text-dim); }
+    .watch-name:focus { color: var(--text); }
+
+    /* Time display */
+    .watch-time {
+      font-family: var(--font-mono);
+      font-size: clamp(22px, 6.5vw, 32px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      text-align: center;
+      line-height: 1;
+    }
+
+    .watch-card.running .watch-time { color: var(--accent); }
+    .watch-card.lapped .watch-time { color: var(--accent-lap); }
+
+    /* Lap indicator */
+    .lap-badge {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--accent-lap);
+      background: var(--accent-lap-dim);
+      border-radius: 6px;
+      padding: 2px 6px;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .watch-card.lapped .lap-badge { opacity: 1; }
+
+    /* Button row */
+    .watch-btns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .btn-watch {
+      padding: 9px 4px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-dim);
+      font-family: var(--font-ui);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: all 0.12s;
+      text-transform: uppercase;
+    }
+
+    .btn-watch:active { transform: scale(0.95); opacity: 0.8; }
+
+    .btn-start {
+      color: var(--accent);
+      border-color: rgba(74, 240, 160, 0.3);
+    }
+
+    .btn-start:hover { background: var(--accent-dim); }
+
+    .btn-lap {
+      color: var(--accent-lap);
+      border-color: rgba(240, 160, 74, 0.3);
+    }
+
+    .btn-lap:hover { background: var(--accent-lap-dim); }
+
+    .btn-reset {
+      color: var(--text-dim);
+      border-color: var(--border);
+      grid-column: span 2;
+      padding: 7px 4px;
+    }
+
+    .btn-reset:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+
+    /* Install banner */
+    #install-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: var(--accent-dim);
+      border-bottom: 1px solid rgba(74, 240, 160, 0.2);
+      font-size: 13px;
+      color: var(--accent);
+      gap: 10px;
+    }
+
+    #install-banner button {
+      padding: 6px 14px;
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    #install-banner .dismiss {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      margin-left: 6px;
+    }
+
+    /* Wake lock indicator */
+    .status-bar {
+      padding: 6px 16px;
+      font-size: 11px;
+      color: var(--text-dim);
+      text-align: center;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+<div id="install-banner">
+  <span>📲 Add to Home Screen for best experience</span>
+  <div>
+    <button id="install-btn">Install</button>
+    <button class="dismiss" id="dismiss-banner">✕</button>
+  </div>
+</div>
+
+<header>
+  <span class="app-title">Coach Timer</span>
+  <div class="header-actions">
+    <button class="btn-global reset-all" id="reset-all-btn">Reset All</button>
+    <button class="btn-global start-all" id="start-all-btn">Start All</button>
+  </div>
+</header>
+
+<div class="grid" id="watch-grid"></div>
+
+<div class="status-bar" id="status-bar">Tap Start to begin timing</div>
+
+<script>
+  // ─── State ───────────────────────────────────────────────────────────────────
+  const WATCH_COUNT = 6;
+  const watches = [];
+  let masterRunning = false;
+  let deferredInstall = null;
+  let wakeLock = null;
+
+  // Default names for workout context
+  const DEFAULT_NAMES = ['Athlete 1','Athlete 2','Athlete 3','Athlete 4','Athlete 5','Athlete 6'];
+
+  // ─── Stopwatch logic ─────────────────────────────────────────────────────────
+  class Stopwatch {
+    constructor(id) {
+      this.id = id;
+      this.elapsed = 0;       // ms accumulated before current start
+      this.startedAt = null;  // Date.now() when last started
+      this.running = false;
+      this.lapped = false;
+      this.lapCount = 0;
+    }
+
+    start() {
+      if (this.running) return;
+      this.startedAt = performance.now();
+      this.running = true;
+      this.lapped = false;
+    }
+
+    pause() {
+      if (!this.running) return;
+      this.elapsed += performance.now() - this.startedAt;
+      this.startedAt = null;
+      this.running = false;
+    }
+
+    lap() {
+      // Lap: reset the elapsed time on THIS watch to zero, keep running
+      if (this.running) {
+        this.startedAt = performance.now();
+      }
+      this.elapsed = 0;
+      this.lapped = true;
+      this.lapCount++;
+    }
+
+    reset() {
+      this.elapsed = 0;
+      this.startedAt = null;
+      this.running = false;
+      this.lapped = false;
+      this.lapCount = 0;
+    }
+
+    getMs() {
+      if (this.running) {
+        return this.elapsed + (performance.now() - this.startedAt);
+      }
+      return this.elapsed;
+    }
+  }
+
+  // ─── Format time ─────────────────────────────────────────────────────────────
+  function fmt(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const tenth = Math.floor((ms % 1000) / 100);
+    if (h > 0) {
+      return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${tenth}`;
+  }
+
+  // ─── Build DOM ───────────────────────────────────────────────────────────────
+  const grid = document.getElementById('watch-grid');
+
+  for (let i = 0; i < WATCH_COUNT; i++) {
+    const sw = new Stopwatch(i);
+    watches.push(sw);
+
+    const card = document.createElement('div');
+    card.className = 'watch-card';
+    card.id = `card-${i}`;
+    card.innerHTML = `
+      <span class="lap-badge" id="lap-badge-${i}">LAP</span>
+      <input class="watch-name" id="name-${i}" type="text"
+             placeholder="${DEFAULT_NAMES[i]}" value="" maxlength="14"
+             autocomplete="off" autocorrect="off" spellcheck="false">
+      <div class="watch-time" id="time-${i}">00:00.0</div>
+      <div class="watch-btns">
+        <button class="btn-watch btn-start" id="start-${i}">Start</button>
+        <button class="btn-watch btn-lap" id="lap-${i}">Lap</button>
+        <button class="btn-watch btn-reset" id="reset-${i}">Reset</button>
+      </div>
+    `;
+    grid.appendChild(card);
+
+    // Bind buttons
+    document.getElementById(`start-${i}`).addEventListener('click', () => toggleWatch(i));
+    document.getElementById(`lap-${i}`).addEventListener('click', () => lapWatch(i));
+    document.getElementById(`reset-${i}`).addEventListener('click', () => resetWatch(i));
+  }
+
+  // ─── Watch controls ───────────────────────────────────────────────────────────
+  function toggleWatch(i) {
+    const sw = watches[i];
+    if (sw.running) {
+      sw.pause();
+    } else {
+      sw.start();
+    }
+    updateCard(i);
+    updateMasterBtn();
+    updateWakeLock();
+  }
+
+  function lapWatch(i) {
+    const sw = watches[i];
+    // If not running, start it and mark as lapped (common: start rest period)
+    if (!sw.running) {
+      sw.start();
+    }
+    sw.lap();
+    updateCard(i);
+
+    // Flash animation
+    const timeEl = document.getElementById(`time-${i}`);
+    timeEl.style.transition = 'none';
+    timeEl.style.opacity = '0.3';
+    requestAnimationFrame(() => {
+      timeEl.style.transition = 'opacity 0.25s';
+      timeEl.style.opacity = '1';
+    });
+  }
+
+  function resetWatch(i) {
+    watches[i].reset();
+    updateCard(i);
+    updateMasterBtn();
+    updateWakeLock();
+  }
+
+  // ─── Global controls ──────────────────────────────────────────────────────────
+  document.getElementById('start-all-btn').addEventListener('click', () => {
+    const anyRunning = watches.some(w => w.running);
+    if (anyRunning) {
+      watches.forEach((w, i) => { w.pause(); updateCard(i); });
+    } else {
+      watches.forEach((w, i) => { w.start(); updateCard(i); });
+    }
+    updateMasterBtn();
+    updateWakeLock();
+  });
+
+  document.getElementById('reset-all-btn').addEventListener('click', () => {
+    watches.forEach((w, i) => { w.reset(); updateCard(i); });
+    updateMasterBtn();
+    updateWakeLock();
+  });
+
+  function updateMasterBtn() {
+    const anyRunning = watches.some(w => w.running);
+    const btn = document.getElementById('start-all-btn');
+    btn.textContent = anyRunning ? 'Pause All' : 'Start All';
+    btn.classList.toggle('running', anyRunning);
+  }
+
+  // ─── DOM updates ─────────────────────────────────────────────────────────────
+  function updateCard(i) {
+    const sw = watches[i];
+    const card = document.getElementById(`card-${i}`);
+    const startBtn = document.getElementById(`start-${i}`);
+
+    card.classList.toggle('running', sw.running);
+    card.classList.toggle('lapped', sw.lapped);
+    startBtn.textContent = sw.running ? 'Pause' : 'Start';
+  }
+
+  // ─── Render loop ─────────────────────────────────────────────────────────────
+  function renderLoop() {
+    watches.forEach((sw, i) => {
+      document.getElementById(`time-${i}`).textContent = fmt(sw.getMs());
+    });
+    requestAnimationFrame(renderLoop);
+  }
+  requestAnimationFrame(renderLoop);
+
+  // ─── Status bar ──────────────────────────────────────────────────────────────
+  function updateStatusBar(msg) {
+    document.getElementById('status-bar').textContent = msg;
+  }
+
+  // Watch for any running state change to update status
+  const origUpdateCard = updateCard;
+
+  // ─── Wake Lock ───────────────────────────────────────────────────────────────
+  async function updateWakeLock() {
+    const anyRunning = watches.some(w => w.running);
+    if (anyRunning && !wakeLock && 'wakeLock' in navigator) {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        updateStatusBar('⚡ Screen will stay on while timing');
+        wakeLock.addEventListener('release', () => {
+          wakeLock = null;
+          updateStatusBar('Screen lock released');
+        });
+      } catch (e) { /* permission denied or not supported */ }
+    } else if (!anyRunning && wakeLock) {
+      wakeLock.release();
+      wakeLock = null;
+      updateStatusBar('All timers stopped');
+    }
+  }
+
+  // Re-acquire wake lock after tab visibility change
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && watches.some(w => w.running)) {
+      updateWakeLock();
+    }
+  });
+
+  // ─── PWA Install ─────────────────────────────────────────────────────────────
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstall = e;
+    document.getElementById('install-banner').style.display = 'flex';
+  });
+
+  document.getElementById('install-btn').addEventListener('click', async () => {
+    if (deferredInstall) {
+      deferredInstall.prompt();
+      const { outcome } = await deferredInstall.userChoice;
+      deferredInstall = null;
+      document.getElementById('install-banner').style.display = 'none';
+    }
+  });
+
+  document.getElementById('dismiss-banner').addEventListener('click', () => {
+    document.getElementById('install-banner').style.display = 'none';
+  });
+
+  window.addEventListener('appinstalled', () => {
+    document.getElementById('install-banner').style.display = 'none';
+  });
+
+  // ─── Service Worker ───────────────────────────────────────────────────────────
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+
+  // Init status
+  updateStatusBar('Tap a name to edit · Start to begin');
+</script>
+</body>
+</html>
