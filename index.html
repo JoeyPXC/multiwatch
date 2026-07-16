@@ -19,8 +19,6 @@
       --border: #22222e;
       --accent: #4af0a0;
       --accent-dim: rgba(74, 240, 160, 0.12);
-      --accent-lap: #f0a04a;
-      --accent-lap-dim: rgba(240, 160, 74, 0.12);
       --text: #f0f0f8;
       --text-dim: #6b6b88;
       --text-label: #9898b8;
@@ -29,6 +27,14 @@
       --radius: 16px;
       --radius-sm: 10px;
     }
+
+    /* Per-watch accent colors */
+    .watch-card[data-color="0"] { --w-accent: #4af0a0; --w-dim: rgba(74,240,160,0.12); }
+    .watch-card[data-color="1"] { --w-accent: #4ab4f0; --w-dim: rgba(74,180,240,0.12); }
+    .watch-card[data-color="2"] { --w-accent: #f0e04a; --w-dim: rgba(240,224,74,0.12); }
+    .watch-card[data-color="3"] { --w-accent: #f04a7a; --w-dim: rgba(240,74,122,0.12); }
+    .watch-card[data-color="4"] { --w-accent: #c04af0; --w-dim: rgba(192,74,240,0.12); }
+    .watch-card[data-color="5"] { --w-accent: #f0944a; --w-dim: rgba(240,148,74,0.12); }
 
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
@@ -117,11 +123,7 @@
     }
 
     .watch-card.running {
-      border-color: rgba(74, 240, 160, 0.25);
-    }
-
-    .watch-card.lapped {
-      border-color: rgba(240, 160, 74, 0.3);
+      border-color: color-mix(in srgb, var(--w-accent) 35%, transparent);
     }
 
     /* Name field */
@@ -153,26 +155,9 @@
       line-height: 1;
     }
 
-    .watch-card.running .watch-time { color: var(--accent); }
-    .watch-card.lapped .watch-time { color: var(--accent-lap); }
+    .watch-card.running .watch-time { color: var(--w-accent); }
 
-    /* Lap indicator */
-    .lap-badge {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      color: var(--accent-lap);
-      background: var(--accent-lap-dim);
-      border-radius: 6px;
-      padding: 2px 6px;
-      opacity: 0;
-      transition: opacity 0.2s;
-    }
 
-    .watch-card.lapped .lap-badge { opacity: 1; }
 
     /* Button row */
     .watch-btns {
@@ -199,18 +184,19 @@
     .btn-watch:active { transform: scale(0.95); opacity: 0.8; }
 
     .btn-start {
-      color: var(--accent);
-      border-color: rgba(74, 240, 160, 0.3);
+      color: var(--w-accent);
+      border-color: color-mix(in srgb, var(--w-accent) 35%, transparent);
     }
 
-    .btn-start:hover { background: var(--accent-dim); }
+    .btn-start:hover { background: var(--w-dim); }
 
     .btn-lap {
-      color: var(--accent-lap);
-      border-color: rgba(240, 160, 74, 0.3);
+      color: var(--w-accent);
+      border-color: color-mix(in srgb, var(--w-accent) 35%, transparent);
+      opacity: 0.7;
     }
 
-    .btn-lap:hover { background: var(--accent-lap-dim); }
+    .btn-lap:hover { background: var(--w-dim); opacity: 1; }
 
     .btn-reset {
       color: var(--text-dim);
@@ -370,8 +356,8 @@
     const card = document.createElement('div');
     card.className = 'watch-card';
     card.id = `card-${i}`;
+    card.dataset.color = i;
     card.innerHTML = `
-      <span class="lap-badge" id="lap-badge-${i}">LAP</span>
       <input class="watch-name" id="name-${i}" type="text"
              placeholder="${DEFAULT_NAMES[i]}" value="" maxlength="14"
              autocomplete="off" autocorrect="off" spellcheck="false">
@@ -461,7 +447,6 @@
     const startBtn = document.getElementById(`start-${i}`);
 
     card.classList.toggle('running', sw.running);
-    card.classList.toggle('lapped', sw.lapped);
     startBtn.textContent = sw.running ? 'Pause' : 'Start';
   }
 
