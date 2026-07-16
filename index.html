@@ -398,6 +398,9 @@
     sw.lap();
     updateCard(i);
 
+    // Vibrate — two short pulses
+    if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
+
     // Flash animation
     const timeEl = document.getElementById(`time-${i}`);
     timeEl.style.transition = 'none';
