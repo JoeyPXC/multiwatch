@@ -8,9 +8,21 @@
   <meta name="apple-mobile-web-app-title" content="Coach Timer">
   <meta name="theme-color" content="#0a0a0f">
   <meta name="mobile-web-app-capable" content="yes">
-  <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="icon-192.png">
   <title>Coach Timer</title>
+
+  <!--
+    PWA OFFLINE STRATEGY
+    ====================
+    All three external PWA dependencies (manifest.json, sw.js, icon-192.png)
+    are generated at runtime so this single HTML file works offline once cached.
+
+    1. Manifest  → injected as a data: URI link tag (no manifest.json file needed)
+    2. Icon      → drawn on a <canvas> then base64'd into the manifest + apple-touch-icon
+    3. Service Worker → written as a Blob URL, registered immediately
+       • The SW caches THIS file's URL on install
+       • fetch handler returns the cached copy when offline
+  -->
+
   <style>
     :root {
       --bg: #0a0a0f;
@@ -28,7 +40,6 @@
       --radius-sm: 10px;
     }
 
-    /* Per-watch accent colors */
     .watch-card[data-color="0"] { --w-accent: #4af0a0; --w-dim: rgba(74,240,160,0.12); }
     .watch-card[data-color="1"] { --w-accent: #4ab4f0; --w-dim: rgba(74,180,240,0.12); }
     .watch-card[data-color="2"] { --w-accent: #f0e04a; --w-dim: rgba(240,224,74,0.12); }
@@ -72,10 +83,7 @@
       color: var(--text-dim);
     }
 
-    .header-actions {
-      display: flex;
-      gap: 8px;
-    }
+    .header-actions { display: flex; gap: 8px; }
 
     .btn-global {
       padding: 7px 14px;
@@ -104,7 +112,6 @@
       align-content: start;
     }
 
-    /* 3 columns on wider screens */
     @media (min-width: 600px) {
       .grid { grid-template-columns: 1fr 1fr 1fr; }
     }
@@ -126,7 +133,6 @@
       border-color: color-mix(in srgb, var(--w-accent) 35%, transparent);
     }
 
-    /* Name field */
     .watch-name {
       font-size: 12px;
       font-weight: 700;
@@ -144,7 +150,6 @@
     .watch-name::placeholder { color: var(--text-dim); }
     .watch-name:focus { color: var(--text); }
 
-    /* Time display */
     .watch-time {
       font-family: var(--font-mono);
       font-size: clamp(22px, 6.5vw, 32px);
@@ -157,9 +162,6 @@
 
     .watch-card.running .watch-time { color: var(--w-accent); }
 
-
-
-    /* Button row */
     .watch-btns {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -213,7 +215,6 @@
 
     .btn-lap:hover { background: var(--w-dim); opacity: 1; }
 
-    /* Install banner */
     #install-banner {
       display: none;
       align-items: center;
@@ -245,7 +246,6 @@
       margin-left: 6px;
     }
 
-    /* Wake lock indicator */
     .status-bar {
       padding: 6px 16px;
       font-size: 11px;
@@ -275,264 +275,385 @@
 
 <div class="grid" id="watch-grid"></div>
 
-<div class="status-bar" id="status-bar">Tap Start to begin timing</div>
+<div class="status-bar" id="status-bar">Tap a name to edit · Start to begin</div>
 
 <script>
-  // ─── State ───────────────────────────────────────────────────────────────────
-  const WATCH_COUNT = 6;
-  const watches = [];
-  let masterRunning = false;
-  let deferredInstall = null;
-  let wakeLock = null;
+// ─── PWA Bootstrap ────────────────────────────────────────────────────────────
+// Everything is generated at runtime so this single HTML file is self-contained.
+// No manifest.json, sw.js, or icon files needed.
 
-  // Default names for workout context
-  const DEFAULT_NAMES = ['Watch 1','Watch 2','Watch 3','Watch 4','Watch 5','Watch 6'];
+(function bootstrapPWA() {
 
-  // ─── Stopwatch logic ─────────────────────────────────────────────────────────
-  class Stopwatch {
-    constructor(id) {
-      this.id = id;
-      this.elapsed = 0;       // ms accumulated before current start
-      this.startedAt = null;  // Date.now() when last started
-      this.running = false;
-      this.lapped = false;
-      this.lapCount = 0;
-    }
+  // 1. Draw the app icon on a canvas
+  const canvas = document.createElement('canvas');
+  canvas.width = 192; canvas.height = 192;
+  const ctx = canvas.getContext('2d');
 
-    start() {
-      if (this.running) return;
-      this.startedAt = performance.now();
-      this.running = true;
-      this.lapped = false;
-    }
+  // Background
+  ctx.fillStyle = '#0a0a0f';
+  // Rounded rect polyfill for older WebKit
+  const r = 40;
+  ctx.beginPath();
+  ctx.moveTo(r, 0);
+  ctx.lineTo(192 - r, 0);
+  ctx.quadraticCurveTo(192, 0, 192, r);
+  ctx.lineTo(192, 192 - r);
+  ctx.quadraticCurveTo(192, 192, 192 - r, 192);
+  ctx.lineTo(r, 192);
+  ctx.quadraticCurveTo(0, 192, 0, 192 - r);
+  ctx.lineTo(0, r);
+  ctx.quadraticCurveTo(0, 0, r, 0);
+  ctx.closePath();
+  ctx.fill();
 
-    pause() {
-      if (!this.running) return;
-      this.elapsed += performance.now() - this.startedAt;
-      this.startedAt = null;
-      this.running = false;
-    }
+  // Outer ring
+  ctx.strokeStyle = '#4af0a0';
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.arc(96, 96, 70, 0, Math.PI * 2);
+  ctx.stroke();
 
-    lap() {
-      // Lap: reset the elapsed time on THIS watch to zero, keep running
-      if (this.running) {
-        this.startedAt = performance.now();
-      }
-      this.elapsed = 0;
-      this.lapped = true;
-      this.lapCount++;
-    }
-
-    reset() {
-      this.elapsed = 0;
-      this.startedAt = null;
-      this.running = false;
-      this.lapped = false;
-      this.lapCount = 0;
-    }
-
-    getMs() {
-      if (this.running) {
-        return this.elapsed + (performance.now() - this.startedAt);
-      }
-      return this.elapsed;
-    }
+  // Tick marks
+  ctx.strokeStyle = '#4af0a0';
+  ctx.lineWidth = 3;
+  for (let i = 0; i < 12; i++) {
+    const angle = (i / 12) * Math.PI * 2 - Math.PI / 2;
+    const inner = i % 3 === 0 ? 56 : 60;
+    ctx.beginPath();
+    ctx.moveTo(96 + Math.cos(angle) * inner, 96 + Math.sin(angle) * inner);
+    ctx.lineTo(96 + Math.cos(angle) * 68, 96 + Math.sin(angle) * 68);
+    ctx.stroke();
   }
 
-  // ─── Format time ─────────────────────────────────────────────────────────────
-  function fmt(ms) {
-    const totalSec = Math.floor(ms / 1000);
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    const tenth = Math.floor((ms % 1000) / 100);
-    if (h > 0) {
-      return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-    }
-    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${tenth}`;
-  }
+  // Hour hand
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(96, 96);
+  ctx.lineTo(96, 44);
+  ctx.stroke();
 
-  // ─── Build DOM ───────────────────────────────────────────────────────────────
-  const grid = document.getElementById('watch-grid');
+  // Minute hand (accent color)
+  ctx.strokeStyle = '#4af0a0';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(96, 96);
+  ctx.lineTo(134, 96);
+  ctx.stroke();
 
-  for (let i = 0; i < WATCH_COUNT; i++) {
-    const sw = new Stopwatch(i);
-    watches.push(sw);
+  // Center dot
+  ctx.fillStyle = '#4af0a0';
+  ctx.beginPath();
+  ctx.arc(96, 96, 5, 0, Math.PI * 2);
+  ctx.fill();
 
-    const card = document.createElement('div');
-    card.className = 'watch-card';
-    card.id = `card-${i}`;
-    card.dataset.color = i;
-    card.innerHTML = `
-      <input class="watch-name" id="name-${i}" type="text"
-             placeholder="${DEFAULT_NAMES[i]}" value="" maxlength="14"
-             autocomplete="off" autocorrect="off" spellcheck="false">
-      <div class="watch-time" id="time-${i}">00:00.0</div>
-      <div class="watch-btns">
-        <button class="btn-watch btn-start" id="start-${i}">Start</button>
-        <button class="btn-watch btn-reset" id="reset-${i}">Reset</button>
-        <button class="btn-watch btn-lap" id="lap-${i}">Lap</button>
-      </div>
-    `;
-    grid.appendChild(card);
+  const iconDataURL = canvas.toDataURL('image/png');
 
-    // Bind buttons
-    document.getElementById(`start-${i}`).addEventListener('click', () => toggleWatch(i));
-    document.getElementById(`lap-${i}`).addEventListener('click', () => lapWatch(i));
-    document.getElementById(`reset-${i}`).addEventListener('click', () => resetWatch(i));
-  }
+  // 2. Inject apple-touch-icon
+  const appleIcon = document.createElement('link');
+  appleIcon.rel = 'apple-touch-icon';
+  appleIcon.href = iconDataURL;
+  document.head.appendChild(appleIcon);
 
-  // ─── Watch controls ───────────────────────────────────────────────────────────
-  function toggleWatch(i) {
-    const sw = watches[i];
-    if (sw.running) {
-      sw.pause();
-    } else {
-      sw.start();
-    }
-    updateCard(i);
-    updateMasterBtn();
-    updateWakeLock();
-  }
+  // 3. Build and inject the Web App Manifest as a data URI
+  const manifest = {
+    name: 'Coach Timer',
+    short_name: 'Coach Timer',
+    description: 'Multi-stopwatch timer for coaches',
+    start_url: location.pathname + location.search,
+    display: 'standalone',
+    background_color: '#0a0a0f',
+    theme_color: '#0a0a0f',
+    orientation: 'portrait-primary',
+    icons: [
+      { src: iconDataURL, sizes: '192x192', type: 'image/png', purpose: 'any maskable' }
+    ]
+  };
 
-  function lapWatch(i) {
-    const sw = watches[i];
-    // If not running, start it and mark as lapped (common: start rest period)
-    if (!sw.running) {
-      sw.start();
-    }
-    sw.lap();
-    updateCard(i);
+  const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' });
+  const manifestURL = URL.createObjectURL(manifestBlob);
+  const manifestLink = document.createElement('link');
+  manifestLink.rel = 'manifest';
+  manifestLink.href = manifestURL;
+  document.head.appendChild(manifestLink);
 
-    // Vibrate — two short pulses
-    if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
-
-    // Flash animation
-    const timeEl = document.getElementById(`time-${i}`);
-    timeEl.style.transition = 'none';
-    timeEl.style.opacity = '0.3';
-    requestAnimationFrame(() => {
-      timeEl.style.transition = 'opacity 0.25s';
-      timeEl.style.opacity = '1';
-    });
-  }
-
-  function resetWatch(i) {
-    watches[i].reset();
-    updateCard(i);
-    updateMasterBtn();
-    updateWakeLock();
-  }
-
-  // ─── Global controls ──────────────────────────────────────────────────────────
-  document.getElementById('start-all-btn').addEventListener('click', () => {
-    const anyRunning = watches.some(w => w.running);
-    if (anyRunning) {
-      watches.forEach((w, i) => { w.pause(); updateCard(i); });
-    } else {
-      watches.forEach((w, i) => { w.start(); updateCard(i); });
-    }
-    updateMasterBtn();
-    updateWakeLock();
-  });
-
-  document.getElementById('reset-all-btn').addEventListener('click', () => {
-    watches.forEach((w, i) => { w.reset(); updateCard(i); });
-    updateMasterBtn();
-    updateWakeLock();
-  });
-
-  function updateMasterBtn() {
-    const anyRunning = watches.some(w => w.running);
-    const btn = document.getElementById('start-all-btn');
-    btn.textContent = anyRunning ? 'Pause All' : 'Start All';
-    btn.classList.toggle('running', anyRunning);
-  }
-
-  // ─── DOM updates ─────────────────────────────────────────────────────────────
-  function updateCard(i) {
-    const sw = watches[i];
-    const card = document.getElementById(`card-${i}`);
-    const startBtn = document.getElementById(`start-${i}`);
-
-    card.classList.toggle('running', sw.running);
-    startBtn.textContent = sw.running ? 'Pause' : 'Start';
-  }
-
-  // ─── Render loop ─────────────────────────────────────────────────────────────
-  function renderLoop() {
-    watches.forEach((sw, i) => {
-      document.getElementById(`time-${i}`).textContent = fmt(sw.getMs());
-    });
-    requestAnimationFrame(renderLoop);
-  }
-  requestAnimationFrame(renderLoop);
-
-  // ─── Status bar ──────────────────────────────────────────────────────────────
-  function updateStatusBar(msg) {
-    document.getElementById('status-bar').textContent = msg;
-  }
-
-  // Watch for any running state change to update status
-  const origUpdateCard = updateCard;
-
-  // ─── Wake Lock ───────────────────────────────────────────────────────────────
-  async function updateWakeLock() {
-    const anyRunning = watches.some(w => w.running);
-    if (anyRunning && !wakeLock && 'wakeLock' in navigator) {
-      try {
-        wakeLock = await navigator.wakeLock.request('screen');
-        updateStatusBar('⚡ Screen will stay on while timing');
-        wakeLock.addEventListener('release', () => {
-          wakeLock = null;
-          updateStatusBar('Screen lock released');
-        });
-      } catch (e) { /* permission denied or not supported */ }
-    } else if (!anyRunning && wakeLock) {
-      wakeLock.release();
-      wakeLock = null;
-      updateStatusBar('All timers stopped');
-    }
-  }
-
-  // Re-acquire wake lock after tab visibility change
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && watches.some(w => w.running)) {
-      updateWakeLock();
-    }
-  });
-
-  // ─── PWA Install ─────────────────────────────────────────────────────────────
-  window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
-    deferredInstall = e;
-    document.getElementById('install-banner').style.display = 'flex';
-  });
-
-  document.getElementById('install-btn').addEventListener('click', async () => {
-    if (deferredInstall) {
-      deferredInstall.prompt();
-      const { outcome } = await deferredInstall.userChoice;
-      deferredInstall = null;
-      document.getElementById('install-banner').style.display = 'none';
-    }
-  });
-
-  document.getElementById('dismiss-banner').addEventListener('click', () => {
-    document.getElementById('install-banner').style.display = 'none';
-  });
-
-  window.addEventListener('appinstalled', () => {
-    document.getElementById('install-banner').style.display = 'none';
-  });
-
-  // ─── Service Worker ───────────────────────────────────────────────────────────
+  // 4. Register a Blob-URL Service Worker that caches this page for offline use
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    const CACHE_NAME = 'coach-timer-v1';
+    // The SW caches the page URL (without hash) so it loads offline
+    const PAGE_URL = location.origin + location.pathname + location.search;
+
+    const swSource = `
+const CACHE = '${CACHE_NAME}';
+const PAGE  = '${PAGE_URL}';
+
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE).then(cache => cache.add(PAGE))
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    )
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', event => {
+  // Only handle same-origin navigations / the cached page
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
+
+  event.respondWith(
+    fetch(event.request)
+      .then(response => {
+        // Update cache with fresh copy when online
+        const clone = response.clone();
+        caches.open(CACHE).then(cache => cache.put(PAGE, clone));
+        return response;
+      })
+      .catch(() => caches.match(PAGE))   // offline fallback
+  );
+});
+`;
+
+    const swBlob = new Blob([swSource], { type: 'application/javascript' });
+    const swURL  = URL.createObjectURL(swBlob);
+
+    navigator.serviceWorker.register(swURL, { scope: '/' })
+      .then(reg => {
+        console.log('[Coach Timer] SW registered, scope:', reg.scope);
+      })
+      .catch(err => {
+        // Blob SW registration can fail in some browsers (e.g. Firefox) —
+        // the app still works online; offline just won't cache.
+        console.warn('[Coach Timer] SW registration failed:', err);
+      });
   }
 
-  // Init status
-  updateStatusBar('Tap a name to edit · Start to begin');
+})();
+
+// ─── State ────────────────────────────────────────────────────────────────────
+const WATCH_COUNT = 6;
+const watches = [];
+let deferredInstall = null;
+let wakeLock = null;
+
+const DEFAULT_NAMES = ['Watch 1','Watch 2','Watch 3','Watch 4','Watch 5','Watch 6'];
+
+// ─── Stopwatch class ──────────────────────────────────────────────────────────
+class Stopwatch {
+  constructor(id) {
+    this.id = id;
+    this.elapsed   = 0;
+    this.startedAt = null;
+    this.running   = false;
+    this.lapCount  = 0;
+  }
+
+  start() {
+    if (this.running) return;
+    this.startedAt = performance.now();
+    this.running = true;
+  }
+
+  pause() {
+    if (!this.running) return;
+    this.elapsed += performance.now() - this.startedAt;
+    this.startedAt = null;
+    this.running = false;
+  }
+
+  lap() {
+    if (this.running) this.startedAt = performance.now();
+    this.elapsed = 0;
+    this.lapCount++;
+  }
+
+  reset() {
+    this.elapsed   = 0;
+    this.startedAt = null;
+    this.running   = false;
+    this.lapCount  = 0;
+  }
+
+  getMs() {
+    return this.running
+      ? this.elapsed + (performance.now() - this.startedAt)
+      : this.elapsed;
+  }
+}
+
+// ─── Format ───────────────────────────────────────────────────────────────────
+function fmt(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const tenth = Math.floor((ms % 1000) / 100);
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${tenth}`;
+}
+
+// ─── Build DOM ────────────────────────────────────────────────────────────────
+const grid = document.getElementById('watch-grid');
+
+for (let i = 0; i < WATCH_COUNT; i++) {
+  const sw = new Stopwatch(i);
+  watches.push(sw);
+
+  const card = document.createElement('div');
+  card.className = 'watch-card';
+  card.id = `card-${i}`;
+  card.dataset.color = i;
+  card.innerHTML = `
+    <input class="watch-name" id="name-${i}" type="text"
+           placeholder="${DEFAULT_NAMES[i]}" value="" maxlength="14"
+           autocomplete="off" autocorrect="off" spellcheck="false">
+    <div class="watch-time" id="time-${i}">00:00.0</div>
+    <div class="watch-btns">
+      <button class="btn-watch btn-start" id="start-${i}">Start</button>
+      <button class="btn-watch btn-reset" id="reset-${i}">Reset</button>
+      <button class="btn-watch btn-lap"   id="lap-${i}">Lap</button>
+    </div>
+  `;
+  grid.appendChild(card);
+
+  document.getElementById(`start-${i}`).addEventListener('click', () => toggleWatch(i));
+  document.getElementById(`lap-${i}`  ).addEventListener('click', () => lapWatch(i));
+  document.getElementById(`reset-${i}`).addEventListener('click', () => resetWatch(i));
+}
+
+// ─── Watch controls ───────────────────────────────────────────────────────────
+function toggleWatch(i) {
+  const sw = watches[i];
+  sw.running ? sw.pause() : sw.start();
+  updateCard(i);
+  updateMasterBtn();
+  updateWakeLock();
+}
+
+function lapWatch(i) {
+  const sw = watches[i];
+  if (!sw.running) sw.start();
+  sw.lap();
+  updateCard(i);
+  if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
+
+  const timeEl = document.getElementById(`time-${i}`);
+  timeEl.style.transition = 'none';
+  timeEl.style.opacity = '0.3';
+  requestAnimationFrame(() => {
+    timeEl.style.transition = 'opacity 0.25s';
+    timeEl.style.opacity = '1';
+  });
+}
+
+function resetWatch(i) {
+  watches[i].reset();
+  updateCard(i);
+  updateMasterBtn();
+  updateWakeLock();
+}
+
+// ─── Global controls ──────────────────────────────────────────────────────────
+document.getElementById('start-all-btn').addEventListener('click', () => {
+  const anyRunning = watches.some(w => w.running);
+  watches.forEach((w, i) => { anyRunning ? w.pause() : w.start(); updateCard(i); });
+  updateMasterBtn();
+  updateWakeLock();
+});
+
+document.getElementById('reset-all-btn').addEventListener('click', () => {
+  watches.forEach((w, i) => { w.reset(); updateCard(i); });
+  updateMasterBtn();
+  updateWakeLock();
+});
+
+function updateMasterBtn() {
+  const anyRunning = watches.some(w => w.running);
+  const btn = document.getElementById('start-all-btn');
+  btn.textContent = anyRunning ? 'Pause All' : 'Start All';
+  btn.classList.toggle('running', anyRunning);
+}
+
+// ─── Card state ───────────────────────────────────────────────────────────────
+function updateCard(i) {
+  const sw  = watches[i];
+  const card = document.getElementById(`card-${i}`);
+  const startBtn = document.getElementById(`start-${i}`);
+  card.classList.toggle('running', sw.running);
+  startBtn.textContent = sw.running ? 'Pause' : 'Start';
+}
+
+// ─── Render loop ──────────────────────────────────────────────────────────────
+function renderLoop() {
+  watches.forEach((sw, i) => {
+    document.getElementById(`time-${i}`).textContent = fmt(sw.getMs());
+  });
+  requestAnimationFrame(renderLoop);
+}
+requestAnimationFrame(renderLoop);
+
+// ─── Wake Lock ────────────────────────────────────────────────────────────────
+async function updateWakeLock() {
+  const anyRunning = watches.some(w => w.running);
+  if (anyRunning && !wakeLock && 'wakeLock' in navigator) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      updateStatusBar('⚡ Screen will stay on while timing');
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+        if (!watches.some(w => w.running)) updateStatusBar('All timers stopped');
+      });
+    } catch (e) { /* permission denied */ }
+  } else if (!anyRunning && wakeLock) {
+    wakeLock.release();
+    wakeLock = null;
+    updateStatusBar('All timers stopped');
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && watches.some(w => w.running)) {
+    updateWakeLock();
+  }
+});
+
+// ─── Status bar ───────────────────────────────────────────────────────────────
+function updateStatusBar(msg) {
+  document.getElementById('status-bar').textContent = msg;
+}
+
+// ─── PWA Install prompt ───────────────────────────────────────────────────────
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredInstall = e;
+  document.getElementById('install-banner').style.display = 'flex';
+});
+
+document.getElementById('install-btn').addEventListener('click', async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  await deferredInstall.userChoice;
+  deferredInstall = null;
+  document.getElementById('install-banner').style.display = 'none';
+});
+
+document.getElementById('dismiss-banner').addEventListener('click', () => {
+  document.getElementById('install-banner').style.display = 'none';
+});
+
+window.addEventListener('appinstalled', () => {
+  document.getElementById('install-banner').style.display = 'none';
+});
 </script>
 </body>
 </html>
