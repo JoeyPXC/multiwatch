@@ -155,16 +155,20 @@
 
     .watch-card.running .watch-time { color: var(--w-accent); }
 
-    .watch-laps {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      line-height: 14px;
-      min-height: 42px;
-      color: var(--text-dim);
-      text-align: center;
+    .watch-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
-    .watch-laps div:first-child { color: var(--text-label); }
+    .watch-head .watch-name { flex: 1; min-width: 0; width: auto; }
+
+    .watch-last {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-label);
+      white-space: nowrap;
+    }
 
     .watch-btns {
       display: grid;
@@ -449,11 +453,13 @@ for (let i = 0; i < WATCH_COUNT; i++) {
   card.id = `card-${i}`;
   card.dataset.color = i;
   card.innerHTML = `
-    <input class="watch-name" id="name-${i}" type="text"
-           placeholder="${DEFAULT_NAMES[i]}" value="" maxlength="14"
-           autocomplete="off" autocorrect="off" spellcheck="false">
+    <div class="watch-head">
+      <input class="watch-name" id="name-${i}" type="text"
+             placeholder="${DEFAULT_NAMES[i]}" value="" maxlength="14"
+             autocomplete="off" autocorrect="off" spellcheck="false">
+      <span class="watch-last" id="last-${i}"></span>
+    </div>
     <div class="watch-time" id="time-${i}">00:00.0</div>
-    <div class="watch-laps" id="laps-${i}"></div>
     <div class="watch-btns">
       <button class="btn-watch btn-start" id="start-${i}">Start</button>
       <button class="btn-watch btn-reset" id="reset-${i}">Reset</button>
@@ -534,10 +540,8 @@ function updateCard(i) {
 
 function renderLaps(i) {
   const sw = watches[i];
-  const el = document.getElementById(`laps-${i}`);
-  const total = sw.laps.length;
-  el.innerHTML = sw.laps.slice(-3).reverse()
-    .map((ms, k) => `<div>L${total - k} ${fmt(ms)}</div>`).join('');
+  const el = document.getElementById(`last-${i}`);
+  el.textContent = sw.laps.length ? fmt(sw.laps[sw.laps.length - 1]) : '';
 }
 
 // ─── Save / restore state ─────────────────────────────────────────────────────
