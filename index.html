@@ -162,6 +162,17 @@
 
     .watch-card.running .watch-time { color: var(--w-accent); }
 
+    .watch-laps {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 14px;
+      min-height: 42px;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    .watch-laps div:first-child { color: var(--text-label); }
+
     .watch-btns {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -380,7 +391,7 @@
 
   // 4. Register a Blob-URL Service Worker that caches this page for offline use
   if ('serviceWorker' in navigator) {
-    const CACHE_NAME = 'coach-timer-v1';
+    const CACHE_NAME = 'coach-timer-v2';
     // The SW caches the page URL (without hash) so it loads offline
     const PAGE_URL = location.origin + location.pathname + location.search;
 
@@ -454,23 +465,28 @@ class Stopwatch {
     this.startedAt = null;
     this.running   = false;
     this.lapCount  = 0;
+    this.laps      = [];
   }
 
   start() {
     if (this.running) return;
-    this.startedAt = performance.now();
+    this.startedAt = Date.now();
     this.running = true;
   }
 
   pause() {
     if (!this.running) return;
-    this.elapsed += performance.now() - this.startedAt;
+    this.elapsed += Date.now() - this.startedAt;
     this.startedAt = null;
     this.running = false;
   }
 
-  lap() {
-    if (this.running) this.startedAt = performance.now();
+  lap(record) {
+    if (record) {
+      this.laps.push(this.getMs());
+      if (this.laps.length > 100) this.laps.shift();
+    }
+    if (this.running) this.startedAt = Date.now();
     this.elapsed = 0;
     this.lapCount++;
   }
@@ -480,11 +496,12 @@ class Stopwatch {
     this.startedAt = null;
     this.running   = false;
     this.lapCount  = 0;
+    this.laps      = [];
   }
 
   getMs() {
     return this.running
-      ? this.elapsed + (performance.now() - this.startedAt)
+      ? this.elapsed + (Date.now() - this.startedAt)
       : this.elapsed;
   }
 }
@@ -518,6 +535,7 @@ for (let i = 0; i < WATCH_COUNT; i++) {
            placeholder="${DEFAULT_NAMES[i]}" value="" maxlength="14"
            autocomplete="off" autocorrect="off" spellcheck="false">
     <div class="watch-time" id="time-${i}">00:00.0</div>
+    <div class="watch-laps" id="laps-${i}"></div>
     <div class="watch-btns">
       <button class="btn-watch btn-start" id="start-${i}">Start</button>
       <button class="btn-watch btn-reset" id="reset-${i}">Reset</button>
@@ -542,8 +560,9 @@ function toggleWatch(i) {
 
 function lapWatch(i) {
   const sw = watches[i];
-  if (!sw.running) sw.start();
-  sw.lap();
+  const wasRunning = sw.running;
+  if (!wasRunning) sw.start();
+  sw.lap(wasRunning);   // first press just starts the timer; later presses record the lap
   updateCard(i);
   if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
 
@@ -591,6 +610,52 @@ function updateCard(i) {
   const startBtn = document.getElementById(`start-${i}`);
   card.classList.toggle('running', sw.running);
   startBtn.textContent = sw.running ? 'Pause' : 'Start';
+  renderLaps(i);
+  saveState();
+}
+
+function renderLaps(i) {
+  const sw = watches[i];
+  const el = document.getElementById(`laps-${i}`);
+  const total = sw.laps.length;
+  el.innerHTML = sw.laps.slice(-3).reverse()
+    .map((ms, k) => `<div>L${total - k} ${fmt(ms)}</div>`).join('');
+}
+
+// ─── Save / restore state ─────────────────────────────────────────────────────
+const STORAGE_KEY = 'coach-timer-state-v1';
+
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      names: watches.map((_, i) => document.getElementById(`name-${i}`).value),
+      watches: watches.map(w => ({
+        elapsed: w.elapsed, startedAt: w.startedAt, running: w.running,
+        lapCount: w.lapCount, laps: w.laps
+      }))
+    }));
+  } catch (e) { /* storage unavailable */ }
+}
+
+function loadState() {
+  try {
+    const data = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (!data) return;
+    watches.forEach((w, i) => {
+      const d = data.watches && data.watches[i];
+      if (d) {
+        w.elapsed   = d.elapsed || 0;
+        w.startedAt = d.running ? d.startedAt : null;
+        w.running   = !!(d.running && d.startedAt);
+        w.lapCount  = d.lapCount || 0;
+        w.laps      = Array.isArray(d.laps) ? d.laps : [];
+      }
+      document.getElementById(`name-${i}`).value = (data.names && data.names[i]) || '';
+      updateCard(i);
+    });
+    updateMasterBtn();
+    updateWakeLock();
+  } catch (e) { /* ignore corrupt state */ }
 }
 
 // ─── Render loop ──────────────────────────────────────────────────────────────
@@ -651,9 +716,19 @@ document.getElementById('dismiss-banner').addEventListener('click', () => {
   document.getElementById('install-banner').style.display = 'none';
 });
 
+watches.forEach((_, i) => {
+  document.getElementById(`name-${i}`).addEventListener('input', saveState);
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') saveState();
+});
+window.addEventListener('pagehide', saveState);
+
 window.addEventListener('appinstalled', () => {
   document.getElementById('install-banner').style.display = 'none';
 });
+
+loadState();
 </script>
 </body>
 </html>
